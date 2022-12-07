@@ -21,3 +21,7 @@ for d in $PLUGINS; do
 		fi
 	fi
 done
+
+
+cp bin/* /opt/cni/bin
+ls -l /opt/cni/bin/
