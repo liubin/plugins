@@ -83,11 +83,12 @@ func NewResultFromResult(result types.Result) (*Result, error) {
 
 // Result is what gets returned from the plugin (via stdout) to the caller
 type Result struct {
-	CNIVersion string         `json:"cniVersion,omitempty"`
-	Interfaces []*Interface   `json:"interfaces,omitempty"`
-	IPs        []*IPConfig    `json:"ips,omitempty"`
-	Routes     []*types.Route `json:"routes,omitempty"`
-	DNS        types.DNS      `json:"dns,omitempty"`
+	CNIVersion  string            `json:"cniVersion,omitempty"`
+	Interfaces  []*Interface      `json:"interfaces,omitempty"`
+	IPs         []*IPConfig       `json:"ips,omitempty"`
+	Routes      []*types.Route    `json:"routes,omitempty"`
+	DNS         types.DNS         `json:"dns,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 func convertFrom02x(from types.Result, toVersion string) (types.Result, error) {

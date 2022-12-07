@@ -33,6 +33,7 @@ import (
 	current "github.com/containernetworking/cni/pkg/types/100"
 	"github.com/containernetworking/cni/pkg/version"
 
+	"github.com/containernetworking/plugins/pkg/dan"
 	"github.com/containernetworking/plugins/pkg/ip"
 	"github.com/containernetworking/plugins/pkg/ipam"
 	"github.com/containernetworking/plugins/pkg/ns"
@@ -93,6 +94,112 @@ func loadConf(bytes []byte) (*NetConf, error) {
 }
 
 func cmdAdd(args *skel.CmdArgs) error {
+	dan.Log(">>>>>>>>>>>>>>>>>>>>")
+	defer dan.Log(">>>>>>>>>>>>>>>>>>>>")
+
+	cfg, err := loadConf(args.StdinData)
+	if err != nil {
+		return err
+	}
+	dan.Log("config %+v", cfg)
+
+	result := &current.Result{}
+	newResult := &current.Result{}
+	metaFile := fmt.Sprintf("/tmp/dans/passthrough/%s.json", cfg.Device)
+	defer func() {
+		meta := dan.FromResult(dan.DirectAttachableNetworkTypePassthrough, cfg.Device, args.IfName, newResult)
+		meta.Save(metaFile)
+	}()
+
+	hostDev, err := getLink(cfg.Device, cfg.HWAddr, cfg.KernelPath, cfg.PCIAddr)
+	if err != nil {
+		return fmt.Errorf("failed to find host device: %v", err)
+	}
+	currentNs, err := ns.GetCurrentNS()
+	if err != nil {
+		return fmt.Errorf("failed to get current ns: %v", err)
+	}
+
+	result.Interfaces = []*current.Interface{{
+		Name:    hostDev.Attrs().Name,
+		Mac:     hostDev.Attrs().HardwareAddr.String(),
+		Sandbox: "",
+	}}
+
+	dan.Log("hostDev %+v", hostDev)
+	dan.Log("result %+v", result)
+
+	if cfg.IPAM.Type == "" {
+		return printLink(hostDev, cfg.CNIVersion, currentNs)
+	}
+
+	// run the IPAM plugin and get back the config to apply
+	r, err := ipam.ExecAdd(cfg.IPAM.Type, args.StdinData)
+	if err != nil {
+		return err
+	}
+	dan.Log("ipam resutl %+v", r)
+
+	// Invoke ipam del if err to avoid ip leak
+	defer func() {
+		if err != nil {
+			ipam.ExecDel(cfg.IPAM.Type, args.StdinData)
+		}
+	}()
+
+	// Convert whatever the IPAM result was into the current Result type
+	newResult, err = current.NewResultFromResult(r)
+	if err != nil {
+		return err
+	}
+	dan.Log("newResult %+v", newResult)
+	if newResult.Annotations == nil {
+		newResult.Annotations = make(map[string]string)
+	}
+	newResult.Annotations["metafile"] = metaFile
+
+	if len(newResult.IPs) == 0 {
+		return errors.New("IPAM plugin returned missing IP config")
+	}
+
+	// for _, ipc := range newResult.IPs {
+	// 	// All addresses apply to the container interface (move from host)
+	// 	ipc.Interface = current.Int(0)
+	// }
+
+	newResult.Interfaces = result.Interfaces
+
+	// if err := ipam.ConfigureIface(args.IfName, newResult); err != nil {
+	// 	return err
+	// }
+
+	// newResult.DNS = cfg.DNS
+
+	return types.PrintResult(newResult, cfg.CNIVersion)
+}
+
+func cmdDel(args *skel.CmdArgs) error {
+	cfg, err := loadConf(args.StdinData)
+	if err != nil {
+		return err
+	}
+	dan.Log("cmdDel config %+v", cfg)
+
+	if cfg.IPAM.Type != "" {
+		if err := ipam.ExecDel(cfg.IPAM.Type, args.StdinData); err != nil {
+			return err
+		}
+	}
+
+	err = os.Remove(fmt.Sprintf("/tmp/dans/passthrough/%s.json", cfg.Device))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	return nil
+}
+
+func cmdAdd2(args *skel.CmdArgs) error {
 	cfg, err := loadConf(args.StdinData)
 	if err != nil {
 		return err
@@ -177,7 +284,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 	return types.PrintResult(newResult, cfg.CNIVersion)
 }
 
-func cmdDel(args *skel.CmdArgs) error {
+func cmdDel2(args *skel.CmdArgs) error {
 	cfg, err := loadConf(args.StdinData)
 	if err != nil {
 		return err
